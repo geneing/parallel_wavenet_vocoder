@@ -8,6 +8,12 @@ generated
 data
 text
 
+# my
+log-*/
+logs-*/
+*.sh
+
+.idea/
 # Created by https://www.gitignore.io
 
 ### Python ###
