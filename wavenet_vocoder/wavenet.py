@@ -110,12 +110,15 @@ class WaveNet(nn.Module):
                  scalar_input=False,
                  use_speaker_embedding=True,
                  legacy=True,
+                 use_gaussian=False,
                  ):
         super(WaveNet, self).__init__()
         self.scalar_input = scalar_input
         self.out_channels = out_channels
         self.cin_channels = cin_channels
         self.legacy = legacy
+        self.use_gaussian = use_gaussian
+
         assert layers % stacks == 0
         layers_per_stack = layers // stacks
         if scalar_input:
@@ -349,8 +352,16 @@ class WaveNet(nn.Module):
 
             # Generate next input by sampling
             if self.scalar_input:
-                x = sample_from_discretized_mix_logistic(
-                    x.view(B, -1, 1), log_scale_min=log_scale_min)
+                if self.use_gaussian:
+                    loc, log_scale = x[:, :, 0], x[:, :, 1]
+                    log_scale = torch.clamp(log_scale, min=log_scale_min)
+
+                    dist = torch.distributions.normal.Normal(loc=loc, scale=torch.exp(log_scale))
+                    x = dist.sample(sample_shape=(1, 1, 1))
+                    x = torch.clamp(x, min=-1.0, max=1.0)
+                else:
+                    x = sample_from_discretized_mix_logistic(
+                        x.view(B, -1, 1), log_scale_min=log_scale_min)
             else:
                 x = F.softmax(x.view(B, -1), dim=1) if softmax else x.view(B, -1)
                 if quantize:

@@ -52,6 +52,8 @@ hparams = tf.contrib.training.HParams(
     # Model:
     # This should equal to `quantize_channels` if mu-law quantize enabled
     # otherwise num_mixture * 3 (pi, mean, log_scale)
+    # if use_gaussian out_channels = 2
+    use_gaussian=False,
     out_channels=10 * 3,
     layers=24,
     stacks=4,

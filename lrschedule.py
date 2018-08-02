@@ -33,3 +33,10 @@ def cyclic_cosine_annealing(init_lr, global_step, T, M):
     """
     TdivM = T // M
     return init_lr / 2.0 * (np.cos(np.pi * ((global_step - 1) % TdivM) / TdivM) + 1.0)
+
+
+def multi_step_lr(init_lr, global_step):
+    lr = init_lr
+    decay_num = global_step // 2e5
+    lr = lr / 2 ** int(decay_num)
+    return lr

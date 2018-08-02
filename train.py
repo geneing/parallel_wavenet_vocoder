@@ -313,6 +313,32 @@ class MaskedCrossEntropyLoss(nn.Module):
         return ((losses * mask_).sum()) / mask_.sum()
 
 
+class MaskedMLELoss(nn.Module):
+    def __init__(self):
+        super(MaskedMLELoss, self).__init__()
+
+    def forward(self, input, target, lengths=None, mask=None, max_len=None):
+        if lengths is None and mask is None:
+            raise RuntimeError("Should provide either lengths or mask")
+
+        # (B, T, 1)
+        if mask is None:
+            mask = sequence_mask(lengths, max_len).unsqueeze(-1)
+
+        input = input.transpose(1, 2)
+        target = torch.squeeze(target, dim=-1)
+        # (B, T, 1)
+        mask_ = torch.squeeze(mask, dim=-1)
+        loc, log_scale = input[:, :, 0], input[:, :, 1]
+        log_scale = torch.clamp(log_scale, min=hparams.log_scale_min)
+
+        dist = torch.distributions.normal.Normal(loc=loc, scale=torch.exp(log_scale))
+        log_prob = dist.log_prob(target)
+        losses = -1.0 * log_prob
+        assert losses.size() == target.size()
+        return ((losses * mask_).sum()) / mask_.sum()
+
+
 class DiscretizedMixturelogisticLoss(nn.Module):
     def __init__(self):
         super(DiscretizedMixturelogisticLoss, self).__init__()
@@ -685,7 +711,10 @@ def train_loop(device, model, data_loaders, optimizer, writer, checkpoint_dir=No
     if is_mulaw_quantize(hparams.input_type):
         criterion = MaskedCrossEntropyLoss()
     else:
-        criterion = DiscretizedMixturelogisticLoss()
+        if hparams.use_gaussian:
+            criterion = MaskedMLELoss()
+        else:
+            criterion = DiscretizedMixturelogisticLoss()
 
     if hparams.exponential_moving_average:
         ema = ExponentialMovingAverage(hparams.ema_decay)
@@ -797,6 +826,7 @@ def build_model():
         freq_axis_kernel_size=hparams.freq_axis_kernel_size,
         scalar_input=is_scalar_input(hparams.input_type),
         legacy=hparams.legacy,
+        use_gaussian=hparams.use_gaussian,
     )
     return model
 

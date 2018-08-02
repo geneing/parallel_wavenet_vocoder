@@ -20,6 +20,7 @@ def wavenet(out_channels=256,
             scalar_input=False,
             use_speaker_embedding=True,
             legacy=True,
+            use_gaussian=False,
             ):
     from wavenet_vocoder import WaveNet
 
@@ -37,6 +38,7 @@ def wavenet(out_channels=256,
                     scalar_input=scalar_input,
                     use_speaker_embedding=use_speaker_embedding,
                     legacy=legacy,
+                    use_gaussian=use_gaussian,
                     )
 
     return model
