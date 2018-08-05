@@ -128,6 +128,13 @@ hparams = tf.contrib.training.HParams(
     save_optimizer_state=True,
 
     # Eval:
+
+    # Student
+    iaf_layers=[10, 10, 10, 10, 10, 10],
+    iaf_stacks=[1, 1, 1, 1, 1, 1],
+    iaf_residual_channels=128,
+    iaf_gate_channels=128,
+    iaf_skip_channels=128,
 )
 
 

@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from .modules import Embedding
 
 from .modules import Conv1d1x1, ResidualConv1dGLU, ConvTranspose2d
-from .mixture import sample_from_discretized_mix_logistic
+from .mixture import sample_from_discretized_mix_logistic, sample_from_gaussian
 
 
 def _expand_global_features(B, T, g, bct=True):
@@ -167,7 +167,7 @@ class WaveNet(nn.Module):
                 self.upsample_conv.append(convt)
                 # assuming we use [0, 1] scaled features
                 # this should avoid non-negative upsampling output
-                self.upsample_conv.append(nn.ReLU(inplace=True))
+                self.upsample_conv.append(nn.LeakyReLU(0.4))
         else:
             self.upsample_conv = None
 
@@ -353,12 +353,8 @@ class WaveNet(nn.Module):
             # Generate next input by sampling
             if self.scalar_input:
                 if self.use_gaussian:
-                    loc, log_scale = x[:, :, 0], x[:, :, 1]
-                    log_scale = torch.clamp(log_scale, min=log_scale_min)
-
-                    dist = torch.distributions.normal.Normal(loc=loc, scale=torch.exp(log_scale))
-                    x = dist.sample(sample_shape=(1, 1, 1))
-                    x = torch.clamp(x, min=-1.0, max=1.0)
+                    x = sample_from_gaussian(x, log_scale_min=log_scale_min)
+                    x = x.view(1, 1)
                 else:
                     x = sample_from_discretized_mix_logistic(
                         x.view(B, -1, 1), log_scale_min=log_scale_min)

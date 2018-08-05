@@ -13,6 +13,9 @@ log-*/
 logs-*/
 *.sh
 
+checkpoint-*
+
+
 .idea/
 # Created by https://www.gitignore.io
 

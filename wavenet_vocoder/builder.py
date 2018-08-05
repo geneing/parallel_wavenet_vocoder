@@ -42,3 +42,45 @@ def wavenet(out_channels=256,
                     )
 
     return model
+
+
+def student(out_channels=256,
+            iaf_layers=[10, 10, 10, 10, 10, 10],
+            iaf_stacks=[1, 1, 1, 1, 1, 1],
+            residual_channels=128,
+            gate_channels=128,
+            skip_out_channels=128,
+            cin_channels=-1,
+            gin_channels=-1,
+            weight_normalization=True,
+            dropout=1 - 0.95,
+            kernel_size=3,
+            n_speakers=None,
+            upsample_conditional_features=False,
+            upsample_scales=[16, 16],
+            freq_axis_kernel_size=3,
+            scalar_input=False,
+            use_speaker_embedding=True,
+            legacy=True,
+            use_gaussian=False,
+            ):
+    from wavenet_vocoder import Student
+
+    model = Student(out_channels=out_channels, iaf_layers=iaf_layers, iaf_stacks=iaf_stacks,
+                    residual_channels=residual_channels,
+                    gate_channels=gate_channels,
+                    skip_out_channels=skip_out_channels,
+                    kernel_size=kernel_size, dropout=dropout,
+                    weight_normalization=weight_normalization,
+                    cin_channels=cin_channels, gin_channels=gin_channels,
+                    n_speakers=n_speakers,
+                    upsample_conditional_features=upsample_conditional_features,
+                    upsample_scales=upsample_scales,
+                    freq_axis_kernel_size=freq_axis_kernel_size,
+                    scalar_input=scalar_input,
+                    use_speaker_embedding=use_speaker_embedding,
+                    legacy=legacy,
+                    use_gaussian=use_gaussian,
+    )
+    return model
+

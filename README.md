@@ -5,8 +5,8 @@
 ## To Do List
 
 - [x] add gaussian distribution to origin wavenet
-- [ ] obtain a good single gaussian teacher
-- [ ] add gaussian student
+- [x] obtain a good single gaussian teacher
+- [x] add gaussian student
 - [ ] obtain a good single gaussian student
 
 

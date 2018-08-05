@@ -7,7 +7,8 @@ options:
     --checkpoint-dir=<dir>       Directory where to save model checkpoints [default: checkpoints].
     --hparams=<parmas>           Hyper parameters [default: ].
     --preset=<json>              Path of preset parameters (json).
-    --checkpoint=<path>          Restore model from checkpoint path if given.
+    --checkpoint_student=<path>  Restore model from student checkpoint path if given.
+    --checkpoint_teacher=<path>  Restore model from teacher checkpoint path if given.
     --restore-parts=<path>       Restore part of the model.
     --log-event-path=<name>      Log event path.
     --reset-optimizer            Reset optimizer.
@@ -286,7 +287,7 @@ class ExponentialMovingAverage(object):
 
 def clone_as_averaged_model(device, model, ema):
     assert ema is not None
-    averaged_model = build_model().to(device)
+    averaged_model = build_model(name='student').to(device)
     averaged_model.load_state_dict(model.state_dict())
     for name, param in averaged_model.named_parameters():
         if name in ema.shadow:
@@ -313,52 +314,49 @@ class MaskedCrossEntropyLoss(nn.Module):
         return ((losses * mask_).sum()) / mask_.sum()
 
 
-class MaskedMLELoss(nn.Module):
-    def __init__(self):
-        super(MaskedMLELoss, self).__init__()
+class KLLoss(nn.Module):
+    def __init__(self, log_scale_min):
+        super(KLLoss, self).__init__()
+        self.log_scale_min = log_scale_min
 
-    def forward(self, input, target, lengths=None, mask=None, max_len=None):
-        if lengths is None and mask is None:
-            raise RuntimeError("Should provide either lengths or mask")
+    def forward(self, teacher_output, student_mu, student_scale, student_log_scale):
+        teacher_mu, teacher_log_scale = teacher_output[:, 0, :], teacher_output[:, 1, :]
+        teacher_log_scale = torch.clamp(teacher_log_scale, min=self.log_scale_min)
+        teacher_scale = torch.exp(teacher_log_scale)
 
-        # (B, T, 1)
-        if mask is None:
-            mask = sequence_mask(lengths, max_len).unsqueeze(-1)
-
-        input = input.transpose(1, 2)
-        target = torch.squeeze(target, dim=-1)
-        # (B, T, 1)
-        mask_ = torch.squeeze(mask, dim=-1)
-        loc, log_scale = input[:, :, 0], input[:, :, 1]
-        log_scale = torch.clamp(log_scale, min=hparams.log_scale_min)
-
-        dist = torch.distributions.normal.Normal(loc=loc, scale=torch.exp(log_scale))
-        log_prob = dist.log_prob(target)
-        losses = -1.0 * log_prob
-        assert losses.size() == target.size()
-        return ((losses * mask_).sum()) / mask_.sum()
+        loss1 = 4 * torch.pow(torch.abs(teacher_log_scale - student_log_scale), 2)
+        loss2 = torch.log(teacher_scale/student_scale) \
+                + (torch.pow(student_scale, 2) - torch.pow(teacher_scale, 2)
+                   + torch.pow((student_mu - teacher_mu), 2)) / (2 * torch.pow(teacher_scale, 2))
+        kl_loss = loss1 + loss2
+        return kl_loss
 
 
-class DiscretizedMixturelogisticLoss(nn.Module):
-    def __init__(self):
-        super(DiscretizedMixturelogisticLoss, self).__init__()
+class PowerLoss(nn.Module):
+    def __init__(self, device):
+        super(PowerLoss, self).__init__()
+        self.device = device
 
-    def forward(self, input, target, lengths=None, mask=None, max_len=None):
-        if lengths is None and mask is None:
-            raise RuntimeError("Should provide either lengths or mask")
+    def forward(self, student_hat, y):
+        batch_size = student_hat.size(0)
+        student_hat = student_hat.view(batch_size, -1)
+        y = y.view(batch_size, -1)
 
-        # (B, T, 1)
-        if mask is None:
-            mask = sequence_mask(lengths, max_len).unsqueeze(-1)
+        window = torch.hann_window(1024, periodic=True).to(device)
+        # we need to get the magnitudes after stft
+        student_stft = torch.stft(student_hat, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
+        y_stft = torch.stft(y, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
 
-        # (B, T, 1)
-        mask_ = mask.expand_as(target)
+        student_magnitude = self.get_magnitude(student_stft)
+        y_magnitude = self.get_magnitude(y_stft)
 
-        losses = discretized_mix_logistic_loss(
-            input, target, num_classes=hparams.quantize_channels,
-            log_scale_min=hparams.log_scale_min, reduce=False)
-        assert losses.size() == target.size()
-        return ((losses * mask_).sum()) / mask_.sum()
+        loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=1), 2)
+        return loss
+
+    def get_magnitude(self, stft_res):
+        real = stft_res[:, :, :, 0]
+        im = stft_res[:, :, :, 1]
+        return torch.sqrt(torch.pow(real, 2) +  torch.pow(im, 2))
 
 
 def ensure_divisible(length, divisible_by=256, lower=True):
@@ -490,26 +488,38 @@ def time_string():
     return datetime.now().strftime('%Y-%m-%d %H:%M')
 
 
-def save_waveplot(path, y_hat, y_target):
+def save_waveplot(path, y_hat, y_target, student_hat=None):
     sr = hparams.sample_rate
+    if student_hat is None:
+        plt.figure(figsize=(16, 6))
+        plt.subplot(2, 1, 1)
+        librosa.display.waveplot(y_target, sr=sr)
+        plt.subplot(2, 1, 2)
+        librosa.display.waveplot(y_hat, sr=sr)
+        plt.tight_layout()
+        plt.savefig(path, format="png")
+        plt.close()
+    else:
+        plt.figure(figsize=(16, 9))
+        plt.subplot(3, 1, 1)
+        librosa.display.waveplot(y_target, sr=sr)
+        plt.subplot(3, 1, 2)
+        librosa.display.waveplot(y_hat, sr=sr)
+        plt.subplot(3, 1, 3)
+        librosa.display.waveplot(student_hat, sr=sr)
+        plt.tight_layout()
+        plt.savefig(path, format="png")
+        plt.close()
 
-    plt.figure(figsize=(16, 6))
-    plt.subplot(2, 1, 1)
-    librosa.display.waveplot(y_target, sr=sr)
-    plt.subplot(2, 1, 2)
-    librosa.display.waveplot(y_hat, sr=sr)
-    plt.tight_layout()
-    plt.savefig(path, format="png")
-    plt.close()
 
-
-def eval_model(global_step, writer, device, model, y, c, g, input_lengths, eval_dir, ema=None):
+def eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema=None):
     if ema is not None:
         print("Using averaged model for evaluation")
-        model = clone_as_averaged_model(device, model, ema)
-        model.make_generation_fast_()
+        student = clone_as_averaged_model(device, student, ema)
+        student.make_generation_fast_()
 
-    model.eval()
+    student.eval()
+    teacher.eval()
     idx = np.random.randint(0, len(y))
     length = input_lengths[idx].data.cpu().item()
 
@@ -528,54 +538,46 @@ def eval_model(global_step, writer, device, model, y, c, g, input_lengths, eval_
         g = g[idx]
         print("Shape of global conditioning features: {}".format(g.size()))
 
-    # Dummy silence
-    if is_mulaw_quantize(hparams.input_type):
-        initial_value = P.mulaw_quantize(0, hparams.quantize_channels)
-    elif is_mulaw(hparams.input_type):
-        initial_value = P.mulaw(0.0, hparams.quantize_channels)
-    else:
-        initial_value = 0.0
-    print("Intial value:", initial_value)
+    # noise input
+    dist = torch.distributions.normal.Normal(loc=0., scale=1.)
+    z = dist.sample((1, 1, length)).to(device)
 
-    # (C,)
-    if is_mulaw_quantize(hparams.input_type):
-        initial_input = np_utils.to_categorical(
-            initial_value, num_classes=hparams.quantize_channels).astype(np.float32)
-        initial_input = torch.from_numpy(initial_input).view(
-            1, 1, hparams.quantize_channels)
-    else:
-        initial_input = torch.zeros(1, 1, 1).fill_(initial_value)
-    initial_input = initial_input.to(device)
-
-    # Run the model in fast eval mode
+    # Run the model
     with torch.no_grad():
-        y_hat = model.incremental_forward(
-            initial_input, c=c, g=g, T=length, softmax=True, quantize=True, tqdm=tqdm,
-            log_scale_min=hparams.log_scale_min)
+        student_hat, _, _, _ = student(x=z, c=c, g=g, log_scale_min=hparams.log_scale_min, device=device)
+        teacher_output = teacher(student_hat, c=c, g=g, softmax=False)
+        teacher_output = teacher_output.transpose(1, 2)
+        teacher_hat = sample_from_gaussian(teacher_output, log_scale_min=hparams.log_scale_min)
 
-    if is_mulaw_quantize(hparams.input_type):
-        y_hat = y_hat.max(1)[1].view(-1).long().cpu().data.numpy()
-        y_hat = P.inv_mulaw_quantize(y_hat, hparams.quantize_channels)
-        y_target = P.inv_mulaw_quantize(y_target, hparams.quantize_channels)
-    elif is_mulaw(hparams.input_type):
-        y_hat = P.inv_mulaw(y_hat.view(-1).cpu().data.numpy(), hparams.quantize_channels)
-        y_target = P.inv_mulaw(y_target, hparams.quantize_channels)
-    else:
-        y_hat = y_hat.view(-1).cpu().data.numpy()
+    # if is_mulaw_quantize(hparams.input_type):
+    #     y_hat = y_hat.max(1)[1].view(-1).long().cpu().data.numpy()
+    #     y_hat = P.inv_mulaw_quantize(y_hat, hparams.quantize_channels)
+    #     y_target = P.inv_mulaw_quantize(y_target, hparams.quantize_channels)
+    # elif is_mulaw(hparams.input_type):
+    #     y_hat = P.inv_mulaw(y_hat.view(-1).cpu().data.numpy(), hparams.quantize_channels)
+    #     y_target = P.inv_mulaw(y_target, hparams.quantize_channels)
+    # else:
+    #     y_hat = y_hat.view(-1).cpu().data.numpy()
+
+    teacher_hat = teacher_hat.view(-1).cpu().data.numpy()
+    student_hat = student_hat.view(-1).cpu().data.numpy()
 
     # Save audio
     os.makedirs(eval_dir, exist_ok=True)
-    path = join(eval_dir, "step{:09d}_predicted.wav".format(global_step))
-    librosa.output.write_wav(path, y_hat, sr=hparams.sample_rate)
+    path = join(eval_dir, "step{:09d}_student.wav".format(global_step))
+    librosa.output.write_wav(path, student_hat, sr=hparams.sample_rate)
+    path = join(eval_dir, "step{:09d}_teacher.wav".format(global_step))
+    librosa.output.write_wav(path, teacher_hat, sr=hparams.sample_rate)
     path = join(eval_dir, "step{:09d}_target.wav".format(global_step))
     librosa.output.write_wav(path, y_target, sr=hparams.sample_rate)
 
     # save figure
     path = join(eval_dir, "step{:09d}_waveplots.png".format(global_step))
-    save_waveplot(path, y_hat, y_target)
+    save_waveplot(path, teacher_hat, y_target, student_hat)
 
 
-def save_states(global_step, writer, y_hat, y, input_lengths, checkpoint_dir=None):
+def save_states(global_step, writer, y_hat, student_hat, y, input_lengths, checkpoint_dir=None):
+
     print("Save intermediate states at step {}".format(global_step))
     idx = np.random.randint(0, len(y_hat))
     length = input_lengths[idx].data.cpu().item()
@@ -606,29 +608,35 @@ def save_states(global_step, writer, y_hat, y, input_lengths, checkpoint_dir=Non
         # (T,)
         y_hat = y_hat[idx].view(-1).data.cpu().numpy()
         y = y[idx].view(-1).data.cpu().numpy()
+        student_hat = student_hat[idx].view(-1).data.cpu().numpy()
 
         if is_mulaw(hparams.input_type):
             y_hat = P.inv_mulaw(y_hat, hparams.quantize_channels)
             y = P.inv_mulaw(y, hparams.quantize_channels)
+            student_hat = P.inv_mulaw(student_hat, hparams.quantize_channels)
 
     # Mask by length
     y_hat[length:] = 0
     y[length:] = 0
+    student_hat[length:] = 0
 
     # Save audio
     audio_dir = join(checkpoint_dir, "audio")
     os.makedirs(audio_dir, exist_ok=True)
-    path = join(audio_dir, "step{:09d}_predicted.wav".format(global_step))
+    path = join(audio_dir, "step{:09d}_teacher.wav".format(global_step))
     librosa.output.write_wav(path, y_hat, sr=hparams.sample_rate)
+    path = join(audio_dir, "step{:09d}_student.wav".format(global_step))
+    librosa.output.write_wav(path, student_hat, sr=hparams.sample_rate)
     path = join(audio_dir, "step{:09d}_target.wav".format(global_step))
     librosa.output.write_wav(path, y, sr=hparams.sample_rate)
 
 
 def __train_step(device, phase, epoch, global_step, global_test_step,
-                 model, optimizer, writer, criterion,
+                 student, teacher, optimizer, writer, kl_criterion, pl_criterion,
                  x, y, c, g, input_lengths,
                  checkpoint_dir, eval_dir=None, do_eval=False, ema=None):
-    sanity_check(model, c, g)
+    sanity_check(student, c, g)
+    sanity_check(teacher, c, g)
 
     # x : (B, C, T)
     # y : (B, T, 1)
@@ -637,11 +645,12 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
     train = (phase == "train")
     clip_thresh = hparams.clip_thresh
     if train:
-        model.train()
+        student.train()
         step = global_step
     else:
-        model.eval()
+        student.eval()
         step = global_test_step
+    teacher.eval()
 
     # Learning rate schedule
     current_lr = hparams.initial_learning_rate
@@ -660,70 +669,76 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
     g = g.to(device) if g is not None else None
 
     # (B, T, 1)
-    mask = sequence_mask(input_lengths, max_len=x.size(-1)).unsqueeze(-1)
-    mask = mask[:, 1:, :]
+    mask = sequence_mask(input_lengths, max_len=x.size(-1))
+
+    dist = torch.distributions.normal.Normal(loc=0., scale=1.)
+    z = dist.sample(x.size())
 
     # Apply model: Run the model in regular eval mode
     # NOTE: softmax is handled in F.cross_entrypy_loss
     # y_hat: (B x C x T)
 
+    # get student output and feed student_hat to teacher get teacher's output
     if use_cuda:
         # multi gpu support
         # you must make sure that batch size % num gpu == 0
-        y_hat = torch.nn.parallel.data_parallel(model, (x, c, g, False))
+        student_hat, student_mu, student_scale, student_log_scale \
+            = torch.nn.parallel.data_parallel(student, (z, c, g, False, device, hparams.log_scale_min))
+        teacher_output = torch.nn.parallel.data_parallel(teacher, (student_hat, c, g, False))
     else:
-        y_hat = model(x, c, g, False)
+        student_hat, student_mu, student_scale, student_log_scale \
+            = student(z, c, g, False, device, hparams.log_scale_min)
+        teacher_output = teacher(student_hat, c, g, False)
 
-    if is_mulaw_quantize(hparams.input_type):
-        # wee need 4d inputs for spatial cross entropy loss
-        # (B, C, T, 1)
-        y_hat = y_hat.unsqueeze(-1)
-        loss = criterion(y_hat[:, :, :-1, :], y[:, 1:, :], mask=mask)
-    else:
-        loss = criterion(y_hat[:, :, :-1], y[:, 1:, :], mask=mask)
+    # calculate loss
+    kl_loss = torch.nn.parallel.data_parallel(kl_criterion, (teacher_output, student_mu, student_scale, student_log_scale))
+    kl_loss = ((kl_loss * mask).sum()) / mask.sum()
+
+    power_loss = torch.nn.parallel.data_parallel(pl_criterion, (student_hat, y))
+    power_loss = torch.mean(power_loss)
+
+    loss = kl_loss + power_loss
 
     if train and step > 0 and step % hparams.checkpoint_interval == 0:
-        save_states(step, writer, y_hat, y, input_lengths, checkpoint_dir)
-        save_checkpoint(device, model, optimizer, step, checkpoint_dir, epoch, ema)
+        save_states(step, writer, teacher_output, student_hat, y, input_lengths, checkpoint_dir)
+        save_checkpoint(device, student, optimizer, step, checkpoint_dir, epoch, ema)
 
     if do_eval:
         # NOTE: use train step (i.e., global_step) for filename
-        eval_model(global_step, writer, device, model, y, c, g, input_lengths, eval_dir, ema)
+        eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema)
 
     # Update
     if train:
         loss.backward()
         if clip_thresh > 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_thresh)
+            grad_norm = torch.nn.utils.clip_grad_norm_(student.parameters(), clip_thresh)
         optimizer.step()
         # update moving average
         if ema is not None:
-            for name, param in model.named_parameters():
+            for name, param in student.named_parameters():
                 if name in ema.shadow:
                     ema.update(name, param.data)
 
     # Logs
     writer.add_scalar("{} loss".format(phase), float(loss.item()), step)
+    writer.add_scalar("{} kl loss".format(phase), float(kl_loss.item()), step)
+    writer.add_scalar("{} power loss".format(phase), float(power_loss.item()), step)
     if train:
         if clip_thresh > 0:
             writer.add_scalar("gradient norm", grad_norm, step)
         writer.add_scalar("learning rate", current_lr, step)
 
-    return loss.item()
+    return loss.item(), kl_loss.item(), power_loss.item()
 
 
-def train_loop(device, model, data_loaders, optimizer, writer, checkpoint_dir=None):
-    if is_mulaw_quantize(hparams.input_type):
-        criterion = MaskedCrossEntropyLoss()
-    else:
-        if hparams.use_gaussian:
-            criterion = MaskedMLELoss()
-        else:
-            criterion = DiscretizedMixturelogisticLoss()
+def train_loop(device, student, teacher, data_loaders, optimizer, writer, checkpoint_dir=None):
+
+    kl_criterion = KLLoss(log_scale_min=hparams.log_scale_min)
+    pl_criterion = PowerLoss(device=device)
 
     if hparams.exponential_moving_average:
         ema = ExponentialMovingAverage(hparams.ema_decay)
-        for name, param in model.named_parameters():
+        for name, param in student.named_parameters():
             if param.requires_grad:
                 ema.register(name, param.data)
     else:
@@ -734,6 +749,8 @@ def train_loop(device, model, data_loaders, optimizer, writer, checkpoint_dir=No
         for phase, data_loader in data_loaders.items():
             train = (phase == "train")
             running_loss = 0.
+            running_kl_loss = 0.
+            running_power_loss = 0.
             test_evaluated = False
             for step, (x, y, c, g, input_lengths) in tqdm(enumerate(data_loader)):
                 # Whether to save eval (i.e., online decoding) result
@@ -754,10 +771,13 @@ def train_loop(device, model, data_loaders, optimizer, writer, checkpoint_dir=No
                     print("[{}] Eval at train step {}".format(phase, global_step))
 
                 # Do step
-                running_loss += __train_step(device,
-                                             phase, global_epoch, global_step, global_test_step, model,
-                                             optimizer, writer, criterion, x, y, c, g, input_lengths,
+                loss, kl_loss, power_loss = __train_step(device,
+                                             phase, global_epoch, global_step, global_test_step, student, teacher,
+                                             optimizer, writer, kl_criterion, pl_criterion, x, y, c, g, input_lengths,
                                              checkpoint_dir, eval_dir, do_eval, ema)
+                running_loss += loss
+                running_kl_loss += kl_loss
+                running_power_loss += power_loss
 
                 # update global state
                 if train:
@@ -767,10 +787,17 @@ def train_loop(device, model, data_loaders, optimizer, writer, checkpoint_dir=No
 
             # log per epoch
             averaged_loss = running_loss / len(data_loader)
+            averaged_kl_loss = running_kl_loss / len(data_loader)
+            averaged_power_loss = running_power_loss / len(data_loader)
+
             writer.add_scalar("{} loss (per epoch)".format(phase),
                               averaged_loss, global_epoch)
-            print("Step {} [{}] Loss: {}".format(
-                global_step, phase, running_loss / len(data_loader)))
+            writer.add_scalar("{} kl loss (per epoch)".format(phase),
+                              averaged_kl_loss, global_epoch)
+            writer.add_scalar("{} power loss (per epoch)".format(phase),
+                              averaged_power_loss, global_epoch)
+            print("Step {:<7f} [{:<5}] Loss: {:<8.4f} KLoss: {:<8.4f}: PLoss: {:<8.4f}".format(
+                global_step, phase, averaged_loss, averaged_kl_loss, averaged_power_loss))
 
         global_epoch += 1
 
@@ -803,7 +830,7 @@ def save_checkpoint(device, model, optimizer, step, checkpoint_dir, epoch, ema=N
         print("Saved averaged checkpoint:", checkpoint_path)
 
 
-def build_model():
+def build_model(name='teacher'):
     if is_mulaw_quantize(hparams.input_type):
         if hparams.out_channels != hparams.quantize_channels:
             raise RuntimeError(
@@ -812,27 +839,50 @@ def build_model():
         s = "Upsample conv layers were specified while local conditioning disabled. "
         s += "Notice that upsample conv layers will never be used."
         warn(s)
-
-    model = getattr(builder, hparams.builder)(
-        out_channels=hparams.out_channels,
-        layers=hparams.layers,
-        stacks=hparams.stacks,
-        residual_channels=hparams.residual_channels,
-        gate_channels=hparams.gate_channels,
-        skip_out_channels=hparams.skip_out_channels,
-        cin_channels=hparams.cin_channels,
-        gin_channels=hparams.gin_channels,
-        weight_normalization=hparams.weight_normalization,
-        n_speakers=hparams.n_speakers,
-        dropout=hparams.dropout,
-        kernel_size=hparams.kernel_size,
-        upsample_conditional_features=hparams.upsample_conditional_features,
-        upsample_scales=hparams.upsample_scales,
-        freq_axis_kernel_size=hparams.freq_axis_kernel_size,
-        scalar_input=is_scalar_input(hparams.input_type),
-        legacy=hparams.legacy,
-        use_gaussian=hparams.use_gaussian,
-    )
+    if name == 'teacher':
+        model = getattr(builder, hparams.builder)(
+            out_channels=hparams.out_channels,
+            layers=hparams.layers,
+            stacks=hparams.stacks,
+            residual_channels=hparams.residual_channels,
+            gate_channels=hparams.gate_channels,
+            skip_out_channels=hparams.skip_out_channels,
+            cin_channels=hparams.cin_channels,
+            gin_channels=hparams.gin_channels,
+            weight_normalization=hparams.weight_normalization,
+            n_speakers=hparams.n_speakers,
+            dropout=hparams.dropout,
+            kernel_size=hparams.kernel_size,
+            upsample_conditional_features=hparams.upsample_conditional_features,
+            upsample_scales=hparams.upsample_scales,
+            freq_axis_kernel_size=hparams.freq_axis_kernel_size,
+            scalar_input=is_scalar_input(hparams.input_type),
+            legacy=hparams.legacy,
+            use_gaussian=hparams.use_gaussian,
+        )
+    elif name == "student":
+        model = getattr(builder, 'student')(
+            out_channels=hparams.out_channels,
+            iaf_layers=hparams.iaf_layers,
+            iaf_stacks=hparams.iaf_stacks,
+            residual_channels=hparams.iaf_residual_channels,
+            gate_channels=hparams.iaf_gate_channels,
+            skip_out_channels=hparams.iaf_skip_channels,
+            cin_channels=hparams.cin_channels,
+            gin_channels=hparams.gin_channels,
+            weight_normalization=hparams.weight_normalization,
+            n_speakers=hparams.n_speakers,
+            dropout=hparams.dropout,
+            kernel_size=hparams.kernel_size,
+            upsample_conditional_features=hparams.upsample_conditional_features,
+            upsample_scales=hparams.upsample_scales,
+            freq_axis_kernel_size=hparams.freq_axis_kernel_size,
+            scalar_input=is_scalar_input(hparams.input_type),
+            legacy=hparams.legacy,
+            use_gaussian=hparams.use_gaussian,
+        )
+    else:
+        raise ValueError('No Such Model: {}'.format(name))
     return model
 
 
@@ -946,7 +996,8 @@ if __name__ == "__main__":
     args = docopt(__doc__)
     print("Command line args:\n", args)
     checkpoint_dir = args["--checkpoint-dir"]
-    checkpoint_path = args["--checkpoint"]
+    checkpoint_student_path = args["--checkpoint_student"]
+    checkpoint_teacher_path = args["--checkpoint_teacher"]
     checkpoint_restore_parts = args["--restore-parts"]
     speaker_id = args["--speaker-id"]
     speaker_id = int(speaker_id) if speaker_id is not None else None
@@ -978,24 +1029,28 @@ if __name__ == "__main__":
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
-    model = build_model().to(device)
+    teacher = build_model(name='teacher').to(device)
+    student = build_model(name='student').to(device)
 
-    receptive_field = model.receptive_field
+    receptive_field = student.receptive_field
     print("Receptive field (samples / ms): {} / {}".format(
         receptive_field, receptive_field / fs * 1000))
 
-    optimizer = optim.Adam(model.parameters(),
+    optimizer = optim.Adam(student.parameters(),
                            lr=hparams.initial_learning_rate, betas=(
         hparams.adam_beta1, hparams.adam_beta2),
         eps=hparams.adam_eps, weight_decay=hparams.weight_decay,
         amsgrad=hparams.amsgrad)
 
     if checkpoint_restore_parts is not None:
-        restore_parts(checkpoint_restore_parts, model)
+        restore_parts(checkpoint_restore_parts, student)
 
     # Load checkpoints
-    if checkpoint_path is not None:
-        load_checkpoint(checkpoint_path, model, optimizer, reset_optimizer)
+    assert checkpoint_teacher_path is not None
+    if checkpoint_teacher_path is not None:
+        restore_parts(checkpoint_teacher_path, teacher)
+    if checkpoint_student_path is not None:
+        load_checkpoint(checkpoint_student_path, student, optimizer, reset_optimizer)
 
     # Setup summary writer for tensorboard
     if log_event_path is None:
@@ -1005,14 +1060,14 @@ if __name__ == "__main__":
 
     # Train!
     try:
-        train_loop(device, model, data_loaders, optimizer, writer,
+        train_loop(device, student, teacher, data_loaders, optimizer, writer,
                    checkpoint_dir=checkpoint_dir)
     except KeyboardInterrupt:
         print("Interrupted!")
         pass
     finally:
         save_checkpoint(
-            device, model, optimizer, global_step, checkpoint_dir, global_epoch)
+            device, student, optimizer, global_step, checkpoint_dir, global_epoch)
 
     print("Finished")
 
