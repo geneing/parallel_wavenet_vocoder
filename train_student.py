@@ -295,25 +295,6 @@ def clone_as_averaged_model(device, model, ema):
     return averaged_model
 
 
-class MaskedCrossEntropyLoss(nn.Module):
-    def __init__(self):
-        super(MaskedCrossEntropyLoss, self).__init__()
-        self.criterion = nn.CrossEntropyLoss(reduce=False)
-
-    def forward(self, input, target, lengths=None, mask=None, max_len=None):
-        if lengths is None and mask is None:
-            raise RuntimeError("Should provide either lengths or mask")
-
-        # (B, T, 1)
-        if mask is None:
-            mask = sequence_mask(lengths, max_len).unsqueeze(-1)
-
-        # (B, T, D)
-        mask_ = mask.expand_as(target)
-        losses = self.criterion(input, target)
-        return ((losses * mask_).sum()) / mask_.sum()
-
-
 class KLLoss(nn.Module):
     def __init__(self, log_scale_min):
         super(KLLoss, self).__init__()

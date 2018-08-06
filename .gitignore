@@ -14,7 +14,7 @@ logs-*/
 *.sh
 
 checkpoint-*
-
+result*
 
 .idea/
 # Created by https://www.gitignore.io
