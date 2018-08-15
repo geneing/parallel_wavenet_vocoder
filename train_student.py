@@ -301,7 +301,9 @@ class KLLoss(nn.Module):
         self.log_scale_min = log_scale_min
 
     def forward(self, teacher_output, student_mu, student_scale, student_log_scale):
-        teacher_mu, teacher_log_scale = teacher_output[:, 0, :], teacher_output[:, 1, :]
+        student_mu, student_scale, student_log_scale = student_mu[:, 1:], student_scale[:, 1:], student_log_scale[:, 1:]
+        # indeed, the teacher output will shift by one
+        teacher_mu, teacher_log_scale = teacher_output[:, 0, :-1], teacher_output[:, 1, :-1]
         teacher_log_scale = torch.clamp(teacher_log_scale, min=self.log_scale_min)
         teacher_scale = torch.exp(teacher_log_scale)
 
@@ -323,11 +325,15 @@ class PowerLoss(nn.Module):
         student_hat = student_hat.view(batch_size, -1)
         y = y.view(batch_size, -1)
 
-        window = torch.hann_window(1024, periodic=True).to(device)
-        # we need to get the magnitudes after stft
-        student_stft = torch.stft(student_hat, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
-        y_stft = torch.stft(y, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
+        # window = torch.hann_window(1024, periodic=True).to(device)
+        # # we need to get the magnitudes after stft
+        # student_stft = torch.stft(student_hat, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
+        # y_stft = torch.stft(y, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
 
+        window = torch.hann_window(1200, periodic=True).to(device)
+        student_stft = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=2048, window=window)
+        y_stft = torch.stft(y, frame_length=1200, hop=300, fft_size=2048, window=window)
+        
         student_magnitude = self.get_magnitude(student_stft)
         y_magnitude = self.get_magnitude(y_stft)
 
@@ -651,6 +657,7 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
 
     # (B, T, 1)
     mask = sequence_mask(input_lengths, max_len=x.size(-1))
+    mask = mask[:, 1:]
 
     dist = torch.distributions.normal.Normal(loc=0., scale=1.)
     z = dist.sample(x.size())
@@ -896,6 +903,20 @@ def load_checkpoint(path, model, optimizer, reset_optimizer):
     return model
 
 
+def share_upsample_conv(teacher, student):
+    student_train_params = []
+    teacher_params = {}
+    for name, param in teacher.named_parameters():
+        teacher_params[name] = param
+    for name, param in student.named_parameters():
+        if "upsample" in name:
+            param.data = teacher_params[name].clone()
+            param.requires_grad = False
+        else:
+            student_train_params.append(param)
+    return student_train_params
+
+
 # https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/3
 def restore_parts(path, model):
     print("Restore part of the model from: {}".format(path))
@@ -1012,12 +1033,17 @@ if __name__ == "__main__":
     # Model
     teacher = build_model(name='teacher').to(device)
     student = build_model(name='student').to(device)
+    
+    if hparams.share_upsample_conv:
+        student_train_params = share_upsample_conv(teacher, student)
+    else:
+        student_train_params = student.parameters()
 
     receptive_field = student.receptive_field
     print("Receptive field (samples / ms): {} / {}".format(
         receptive_field, receptive_field / fs * 1000))
 
-    optimizer = optim.Adam(student.parameters(),
+    optimizer = optim.Adam(student_train_params,
                            lr=hparams.initial_learning_rate, betas=(
         hparams.adam_beta1, hparams.adam_beta2),
         eps=hparams.adam_eps, weight_decay=hparams.weight_decay,
@@ -1028,8 +1054,10 @@ if __name__ == "__main__":
 
     # Load checkpoints
     assert checkpoint_teacher_path is not None
-    if checkpoint_teacher_path is not None:
-        restore_parts(checkpoint_teacher_path, teacher)
+    restore_parts(checkpoint_teacher_path, teacher)
+    for param in teacher.parameters():
+        param.requires_grad = False
+
     if checkpoint_student_path is not None:
         load_checkpoint(checkpoint_student_path, student, optimizer, reset_optimizer)
 

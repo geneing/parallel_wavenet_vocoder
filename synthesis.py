@@ -167,7 +167,7 @@ if __name__ == "__main__":
 
     # Load conditional features
     if conditional_path is not None:
-        wav_id = conditional_path.split("/")[-1].split('.')[0].replace("mel", "syn_iaf")
+        wav_id = conditional_path.split("/")[-1].split('.')[0].replace("mel", "syn_t")
         c = np.load(conditional_path)
         if c.shape[1] != hparams.num_mels:
             np.swapaxes(c, 0, 1)

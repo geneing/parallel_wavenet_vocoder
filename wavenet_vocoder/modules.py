@@ -182,6 +182,7 @@ class ResidualConv1dGLU(nn.Module):
         x = _conv1x1_forward(self.conv1x1_out, x, is_incremental)
 
         x = (x + residual) * math.sqrt(0.5)
+
         return x, s
 
     def clear_buffer(self):

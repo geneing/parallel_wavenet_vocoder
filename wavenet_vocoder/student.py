@@ -176,7 +176,8 @@ class Student(nn.Module):
                 self.upsample_conv.append(convt)
                 # assuming we use [0, 1] scaled features
                 # this should avoid non-negative upsampling output
-                self.upsample_conv.append(nn.LeakyReLU(0.4))
+                # so we don't use leaky relu, i think use relu better
+                self.upsample_conv.append(nn.ReLU(inplace=True))
         else:
             self.upsample_conv = None
 
@@ -252,7 +253,7 @@ class Student(nn.Module):
             for layer in each_iaf_layer[2]:
                 output = layer(output)
             mu, log_scale = torch.unsqueeze(output[:, 0, :], dim=1), torch.unsqueeze(output[:, 1, :], dim=1)
-            log_scale = torch.clamp(log_scale, min=log_scale_min)
+            # log_scale = torch.clamp(log_scale, min=log_scale_min)
             scale = torch.exp(log_scale)
 
             x = x * scale + mu
@@ -263,7 +264,7 @@ class Student(nn.Module):
 
         log_scale_tot = torch.clamp(log_scale_tot, min=log_scale_min)
         scale_tot = torch.clamp(scale_tot, min=np.exp(log_scale_min))
-
+        
         mu_tot = torch.squeeze(mu_tot, dim=1)
         log_scale_tot = torch.squeeze(log_scale_tot, dim=1)
         scale_tot = torch.squeeze(scale_tot, dim=1)

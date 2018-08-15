@@ -1,16 +1,18 @@
 # Parallel WaveNet vocoder
 
-About the samples, i will add later, now the samples is not much good.
-
 > Note: the code is adapted from [r9y9's wavenet vocoder](https://github.com/r9y9/wavenet_vocoder), u can get more information about wavenet at there.
 
-## To Do List
+## [Samples](https://soundcloud.com/dpm1b9vjiaap/sets/paralle-wavenet-samples)
+some problems still exists:
+1. the generated wav from teacher will have some noise in silence area(1000k step)
+2. the generated wav from student will have some noise in the high frequence area(210k step)
+3. once i get good generated wav, i will update
 
-- [x] add gaussian distribution to origin wavenet
-- [x] obtain a good single gaussian teacher (430K now)
-- [x] add gaussian student
-- [ ] obtain a good single gaussian student (training, 70k, i use 330k as the teacher)
-- [ ] test share upsample conv(now not share)
+## important details
+- use relu rather than leaky relu
+- don't apply skip connection after the residual connection, the same as r9y9's implemention
+- you should set `share_upsample_conv=True` in `hparams.py` when u train the student
+
 
 ## Quick Start
 

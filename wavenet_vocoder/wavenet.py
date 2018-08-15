@@ -167,7 +167,7 @@ class WaveNet(nn.Module):
                 self.upsample_conv.append(convt)
                 # assuming we use [0, 1] scaled features
                 # this should avoid non-negative upsampling output
-                self.upsample_conv.append(nn.LeakyReLU(0.4))
+                self.upsample_conv.append(nn.ReLU(inplace=True))
         else:
             self.upsample_conv = None
 
