@@ -1,8 +1,7 @@
 # Parallel WaveNet vocoder
 
-> Note: the code is adapted from [r9y9's wavenet vocoder](https://github.com/r9y9/wavenet_vocoder), u can get more information about wavenet at there.
+> Note: the code is adapted from [azraelkuan/parallel_wavenet_vocoder](https://github.com/azraelkuan/parallel_wavenet_vocoder.git), u can get more information about wavenet at there.
 
-## [Samples](https://soundcloud.com/dpm1b9vjiaap/sets/paralle-wavenet-samples)
 some problems still exists:
 1. the generated wav from teacher will have some noise in silence area(1000k step)
 2. the generated wav from student will have some noise in the high frequence area(210k step)
