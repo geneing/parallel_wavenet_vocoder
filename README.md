@@ -2,11 +2,10 @@
 
 > Note: the code is adapted from [r9y9's wavenet vocoder](https://github.com/r9y9/wavenet_vocoder), u can get more information about wavenet at there.
 
-## [Samples](https://soundcloud.com/dpm1b9vjiaap/sets/paralle-wavenet-samples)
+## [Samples](https://soundcloud.com/dpm1b9vjiaap/sets/parallel-new-samples)
 some problems still exists:
 1. the generated wav from teacher will have some noise in silence area(1000k step)
-2. the generated wav from student will have some noise in the high frequence area(210k step)
-3. once i get good generated wav, i will update
+2. the generated wav from student still have little noise, but most high frequence noise have been removed
 
 ## important details
 - use relu rather than leaky relu

@@ -316,9 +316,10 @@ class KLLoss(nn.Module):
 
 
 class PowerLoss(nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, sample_rate):
         super(PowerLoss, self).__init__()
         self.device = device
+        self.sample_rate = sample_rate
 
     def forward(self, student_hat, y):
         batch_size = student_hat.size(0)
@@ -331,14 +332,22 @@ class PowerLoss(nn.Module):
         # y_stft = torch.stft(y, frame_length=hparams.fft_size, hop=hparams.hop_size, window=window)
 
         window = torch.hann_window(1200, periodic=True).to(device)
-        student_stft = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=2048, window=window)
-        y_stft = torch.stft(y, frame_length=1200, hop=300, fft_size=2048, window=window)
-        
+        freq = int(3000 / (self.sample_rate * 0.5) * 1025)
+        # we use fft size 2048 for frequence lower than 3000hz
+        student_stft = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=2048, window=window)[:, :, :freq, :]
+        y_stft = torch.stft(y, frame_length=1200, hop=300, fft_size=2048, window=window)[:, :, :freq, :]
         student_magnitude = self.get_magnitude(student_stft)
         y_magnitude = self.get_magnitude(y_stft)
-
         loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=1), 2)
-        return loss
+
+        freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
+        student_stft1 = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
+        y_stft1 = torch.stft(y, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
+        student_magnitude1 = self.get_magnitude(student_stft1)
+        y_magnitude1 = self.get_magnitude(y_stft1)
+        loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=1), 2)
+
+        return torch.mean(loss, dim=1) + 10 * torch.mean(loss1, dim=1)
 
     def get_magnitude(self, stft_res):
         real = stft_res[:, :, :, 0]
@@ -722,7 +731,7 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
 def train_loop(device, student, teacher, data_loaders, optimizer, writer, checkpoint_dir=None):
 
     kl_criterion = KLLoss(log_scale_min=hparams.log_scale_min)
-    pl_criterion = PowerLoss(device=device)
+    pl_criterion = PowerLoss(device=device, sample_rate=hparams.sample_rate)
 
     if hparams.exponential_moving_average:
         ema = ExponentialMovingAverage(hparams.ema_decay)
