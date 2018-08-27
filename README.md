@@ -4,8 +4,7 @@
 
 some problems still exists:
 1. the generated wav from teacher will have some noise in silence area(1000k step)
-2. the generated wav from student will have some noise in the high frequence area(210k step)
-3. once i get good generated wav, i will update
+2. the generated wav from student still have little noise, but most high frequence noise have been removed
 
 ## important details
 - use relu rather than leaky relu
