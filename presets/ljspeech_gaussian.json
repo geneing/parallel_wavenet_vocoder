@@ -41,7 +41,7 @@
   "test_size": 0.0441,
   "test_num_samples": null,
   "random_state": 1234,
-  "batch_size": 2,
+  "batch_size": 8,
   "adam_beta1": 0.9,
   "adam_beta2": 0.999,
   "adam_eps": 1e-08,

@@ -334,8 +334,8 @@ class PowerLoss(nn.Module):
         window = torch.hann_window(1200, periodic=True).to(device)
         freq = int(3000 / (self.sample_rate * 0.5) * 1025)
         # we use fft size 2048 for frequence lower than 3000hz
-        student_stft = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=2048, window=window)[:, :, :freq, :]
-        y_stft = torch.stft(y, frame_length=1200, hop=300, fft_size=2048, window=window)[:, :, :freq, :]
+        student_stft = torch.stft(student_hat, 2048, win_length=1200, hop_length=300, window=window)[:, :, :freq, :]
+        y_stft = torch.stft(y, 2048, win_length=1200, hop_length=300, window=window)[:, :, :freq, :]
         student_magnitude = self.get_magnitude(student_stft)
         y_magnitude = self.get_magnitude(y_stft)
         loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=1), 2)
