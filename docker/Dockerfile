@@ -43,6 +43,8 @@ RUN TORCH_CUDA_ARCH_LIST="3.0;3.5;5.2;6.0;6.1" TORCH_NVCC_FLAGS="-Xfatbin -compr
 WORKDIR /opt/pytorch
 RUN git clone https://github.com/pytorch/vision.git && cd vision && pip install -v .
 
+RUN pip install -U docopts nnmnkwii>=0.0.11 tqdm tensorboardX keras scikit-learn lws librosa
+
 WORKDIR /workspace
 RUN chmod -R a+w /workspace
 

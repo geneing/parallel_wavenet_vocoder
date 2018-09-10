@@ -313,6 +313,9 @@ class KLLoss(nn.Module):
                    + torch.pow((student_mu - teacher_mu), 2)) / (2 * torch.pow(teacher_scale, 2))
         kl_loss = loss1 + loss2
 
+        if torch.isnan(kl_loss).any():
+            import pdb; pdb.set_trace()
+
         return kl_loss
 
 
@@ -339,7 +342,7 @@ class PowerLoss(nn.Module):
         y_stft = torch.stft(y, 2048, win_length=1200, hop_length=300, window=window)[:, :freq, :, :]
         student_magnitude = self.get_magnitude(student_stft)
         y_magnitude = self.get_magnitude(y_stft)
-        loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=1), 2)
+        loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=2), 2)
 
         freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
         #student_stft1 = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
@@ -350,7 +353,7 @@ class PowerLoss(nn.Module):
 
         student_magnitude1 = self.get_magnitude(student_stft1)
         y_magnitude1 = self.get_magnitude(y_stft1)
-        loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=1), 2)
+        loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=2), 2)
 
         return torch.mean(loss, dim=1) + 10 * torch.mean(loss1, dim=1)
 
