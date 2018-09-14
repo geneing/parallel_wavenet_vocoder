@@ -338,24 +338,24 @@ class PowerLoss(nn.Module):
         window = torch.hann_window(1200, periodic=True).to(device)
         freq = int(3000 / (self.sample_rate * 0.5) * 1025)
         # we use fft size 2048 for frequence lower than 3000hz
-        student_stft = torch.stft(student_hat, 2048, win_length=1200, hop_length=300, window=window)[:, :freq, :, :]
-        y_stft = torch.stft(y, 2048, win_length=1200, hop_length=300, window=window)[:, :freq, :, :]
+        student_stft = torch.stft(student_hat, 2048, win_length=1200, hop_length=300, window=window) #[:, :freq, :, :]
+        y_stft = torch.stft(y, 2048, win_length=1200, hop_length=300, window=window) #[:, :freq, :, :]
         student_magnitude = self.get_magnitude(student_stft)
         y_magnitude = self.get_magnitude(y_stft)
         loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=2), 2)
 
-        freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
+        # freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
         #student_stft1 = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
         #y_stft1 = torch.stft(y, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
 
-        student_stft1 = torch.stft(student_hat, 512, hop_length=300)[:, freq1:, :, :]
-        y_stft1 = torch.stft(y, 512, hop_length=300)[:, freq1:, :, :]
+        # student_stft1 = torch.stft(student_hat, 512, hop_length=300)[:, freq1:, :, :]
+        # y_stft1 = torch.stft(y, 512, hop_length=300)[:, freq1:, :, :]
+        #
+        # student_magnitude1 = self.get_magnitude(student_stft1)
+        # y_magnitude1 = self.get_magnitude(y_stft1)
+        # loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=2), 2)
 
-        student_magnitude1 = self.get_magnitude(student_stft1)
-        y_magnitude1 = self.get_magnitude(y_stft1)
-        loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=2), 2)
-
-        return torch.mean(loss, dim=1) + 10 * torch.mean(loss1, dim=1)
+        return torch.mean(loss, dim=1) # + 10 * torch.mean(loss1, dim=1)
 
     def get_magnitude(self, stft_res):
         real = stft_res[:, :, :, 0]
@@ -702,6 +702,11 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
     power_loss = torch.nn.parallel.data_parallel(pl_criterion, (student_hat, y))
     power_loss = torch.mean(power_loss)
 
+    if torch.isnan(power_loss).any():
+        import pdb; pdb.set_trace()
+    if torch.isnan(kl_loss).any():
+        import pdb; pdb.set_trace()
+
     loss = kl_loss + power_loss
 
     if train and step > 0 and step % hparams.checkpoint_interval == 0:
@@ -721,6 +726,8 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
         # update moving average
         if ema is not None:
             for name, param in student.named_parameters():
+                if torch.isnan(param.data).any():
+                    import pdb; pdb.set_trace()
                 if name in ema.shadow:
                     ema.update(name, param.data)
 

@@ -4,7 +4,7 @@ cp -rv Speech/parallel_wavenet_vocoder parallel_wavenet_vocoder
 
 cd parallel_wavenet_vocoder
 
-python train.py --preset=presets/ljspeech_gaussian.json --data-root /workspace/Speech/TrainingData/LJSpeech-1.0_parallel_wavenet/ --checkpoint-dir=checkpoint-ljspeech --hparams="batch_size=8,"  --log-event-path=log-ljspeech --checkpoint=/workspace/Speech/parallel_wavenet_vocoder/checkpoint-ljspeech/checkpoint_step000750000_ema.pth
+python train.py --preset=presets/ljspeech_gaussian.json --data-root /workspace/Speech/TrainingData/LJSpeech-1.0_parallel_wavenet/ --checkpoint-dir=/output/checkpoint-ljspeech --hparams="batch_size=8,"  --log-event-path=/output/log-ljspeech --checkpoint=/workspace/Speech/parallel_wavenet_vocoder/checkpoint-ljspeech/checkpoint_step000750000_ema.pth
 
 
 
