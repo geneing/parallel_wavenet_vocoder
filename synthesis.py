@@ -202,7 +202,7 @@ if __name__ == "__main__":
     dst_wav_path = join(os.path.join(dst_dir, checkpoint_name), "{}{}.wav".format(wav_id, file_name_suffix))
 
     # DO generate
-    waveform, debug = wavegen(model, length, c=c, g=speaker_id, initial_value=initial_value, fast=True, debug=True)
+    waveform, debug = wavegen(model, length, c=c, g=speaker_id, initial_value=initial_value, fast=True, debug=True, nosample=False)
 
     # save
     librosa.output.write_wav(dst_wav_path, waveform, sr=hparams.sample_rate)

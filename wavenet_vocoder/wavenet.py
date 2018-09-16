@@ -357,6 +357,7 @@ class WaveNet(nn.Module):
                     if debug: debug_x = x.clone()
                     if nosample:
                         x = x[:, :, 0]
+                        x=torch.clamp(x, min=-1.0, max=1.0)
                     else:
                         x = sample_from_gaussian(x, log_scale_min=log_scale_min)
                     x = x.view(1, 1)
