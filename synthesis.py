@@ -53,7 +53,7 @@ def _to_numpy(x):
 
 
 def wavegen(model, length=None, c=None, g=None, initial_value=None,
-            fast=False, tqdm=tqdm):
+            fast=False, tqdm=tqdm, debug=False, nosample=False):
     """Generate waveform samples by WaveNet.
 
     Args:
@@ -124,7 +124,8 @@ def wavegen(model, length=None, c=None, g=None, initial_value=None,
     with torch.no_grad():
         y_hat = model.incremental_forward(
             initial_input, c=c, g=g, T=length, tqdm=tqdm, softmax=True, quantize=True,
-            log_scale_min=hparams.log_scale_min)
+            log_scale_min=hparams.log_scale_min, nosample=nosample, debug=debug)
+        if debug: y_hat, debug_out = y_hat
 
     if is_mulaw_quantize(hparams.input_type):
         y_hat = y_hat.max(1)[1].view(-1).long().cpu().data.numpy()
@@ -134,7 +135,7 @@ def wavegen(model, length=None, c=None, g=None, initial_value=None,
     else:
         y_hat = y_hat.view(-1).cpu().data.numpy()
 
-    return y_hat
+    return y_hat if not debug else (y_hat, debug_out)
 
 
 if __name__ == "__main__":
@@ -201,10 +202,10 @@ if __name__ == "__main__":
     dst_wav_path = join(os.path.join(dst_dir, checkpoint_name), "{}{}.wav".format(wav_id, file_name_suffix))
 
     # DO generate
-    waveform = wavegen(model, length, c=c, g=speaker_id, initial_value=initial_value, fast=True)
+    waveform, debug = wavegen(model, length, c=c, g=speaker_id, initial_value=initial_value, fast=True, debug=True)
 
     # save
-    librosa.output.write_wav(dst_wav_path, waveform, sr=hparams.sample_rate)
-
+    #librosa.output.write_wav(dst_wav_path, waveform, sr=hparams.sample_rate)
+    np.save(dst_wav_path+'.npy', debug)
     print("Finished! Check out {} for generated audio samples.".format(dst_dir))
     sys.exit(0)

@@ -242,7 +242,7 @@ class WaveNet(nn.Module):
     def incremental_forward(self, initial_input=None, c=None, g=None,
                             T=100, test_inputs=None,
                             tqdm=lambda x: x, softmax=True, quantize=True,
-                            log_scale_min=-7.0):
+                            log_scale_min=-7.0, debug = False, nosample = False):
         """Incremental forward step
 
         Due to linearized convolutions, inputs of shape (B x C x T) are reshaped
@@ -308,6 +308,7 @@ class WaveNet(nn.Module):
             c = c.transpose(1, 2).contiguous()
 
         outputs = []
+        if debug: outputs_debug = []
         if initial_input is None:
             if self.scalar_input:
                 initial_input = torch.zeros(B, 1, 1)
@@ -353,7 +354,11 @@ class WaveNet(nn.Module):
             # Generate next input by sampling
             if self.scalar_input:
                 if self.use_gaussian:
-                    x = sample_from_gaussian(x, log_scale_min=log_scale_min)
+                    if debug: debug_x = x.clone()
+                    if nosample:
+                        x = x[:, :, 0]
+                    else:
+                        x = sample_from_gaussian(x, log_scale_min=log_scale_min)
                     x = x.view(1, 1)
                 else:
                     x = sample_from_discretized_mix_logistic(
@@ -366,13 +371,19 @@ class WaveNet(nn.Module):
                     x.zero_()
                     x[:, sample] = 1.0
             outputs += [x.data]
+            if debug: outputs_debug += [debug_x]
         # T x B x C
         outputs = torch.stack(outputs)
+
         # B x C x T
         outputs = outputs.transpose(0, 1).transpose(1, 2).contiguous()
 
+        if debug:
+            outputs_debug = torch.stack(outputs_debug)
+            outputs_debug = outputs_debug.transpose(0, 1).transpose(1, 2).contiguous()
+
         self.clear_buffer()
-        return outputs
+        return outputs if not debug else (outputs, outputs_debug)
 
     def clear_buffer(self):
         self.first_conv.clear_buffer()
