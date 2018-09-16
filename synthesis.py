@@ -205,7 +205,8 @@ if __name__ == "__main__":
     waveform, debug = wavegen(model, length, c=c, g=speaker_id, initial_value=initial_value, fast=True, debug=True)
 
     # save
-    #librosa.output.write_wav(dst_wav_path, waveform, sr=hparams.sample_rate)
-    np.save(dst_wav_path+'.npy', debug)
+    librosa.output.write_wav(dst_wav_path, waveform, sr=hparams.sample_rate)
+    np.save(dst_wav_path+'.debug.npy', debug)
+    np.save(dst_wav_path+'.npy', waveform)
     print("Finished! Check out {} for generated audio samples.".format(dst_dir))
     sys.exit(0)
