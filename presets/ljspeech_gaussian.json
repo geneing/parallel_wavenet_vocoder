@@ -16,7 +16,7 @@
   "rescaling": true,
   "rescaling_max": 0.999,
   "allow_clipping_in_normalization": true,
-  "log_scale_min": -32.23619130191664,
+  "log_scale_min": -7e0,
   "use_gaussian": true,
   "out_channels": 2,
   "layers": 20,

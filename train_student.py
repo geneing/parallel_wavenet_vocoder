@@ -648,6 +648,8 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
     # g : (B,)
     train = (phase == "train")
     clip_thresh = hparams.clip_thresh
+    distill_direct = hparams.distill_direct
+
     if train:
         student.train()
         step = global_step
@@ -689,11 +691,17 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
         # you must make sure that batch size % num gpu == 0
         student_hat, student_mu, student_scale, student_log_scale \
             = torch.nn.parallel.data_parallel(student, (z, c, g, False, device, hparams.log_scale_min))
-        teacher_output = torch.nn.parallel.data_parallel(teacher, (student_hat, c, g, False))
+        if distill_direct:
+            teacher_output = torch.nn.parallel.data_parallel(teacher, (x, c, g, False))
+        else:
+            teacher_output = torch.nn.parallel.data_parallel(teacher, (student_hat, c, g, False))
     else:
         student_hat, student_mu, student_scale, student_log_scale \
             = student(z, c, g, False, device, hparams.log_scale_min)
-        teacher_output = teacher(student_hat, c, g, False)
+        if distill_direct:
+            teacher_output = teacher(x, c, g, False)
+        else:
+            teacher_output = teacher(student_hat, c, g, False)
 
     # calculate loss
     kl_loss = torch.nn.parallel.data_parallel(kl_criterion, (teacher_output, student_mu, student_scale, student_log_scale))

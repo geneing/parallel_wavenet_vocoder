@@ -47,7 +47,7 @@ hparams = tf.contrib.training.HParams(
     allow_clipping_in_normalization=True,
 
     # Mixture of logistic distributions:
-    log_scale_min=float(np.log(1e-14)),
+    log_scale_min=float(-7.),
 
     # Model:
     # This should equal to `quantize_channels` if mu-law quantize enabled
@@ -135,6 +135,9 @@ hparams = tf.contrib.training.HParams(
     iaf_residual_channels=128,
     iaf_gate_channels=128,
     iaf_skip_channels=128,
+
+    #Experiments
+    distill_direct=False,
 )
 
 
