@@ -271,12 +271,12 @@ class Student(nn.Module):
 
         x = torch.clamp(x, min=-1.0, max=1.0)
 
-        if torch.isnan(log_scale_tot).any():
-            import pdb; pdb.set_trace()
-        if torch.isnan(scale_tot).any():
-            import pdb; pdb.set_trace()
-        if torch.isnan(mu_tot).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(log_scale_tot).any():
+        #     import pdb; pdb.set_trace()
+        # if torch.isnan(scale_tot).any():
+        #     import pdb; pdb.set_trace()
+        # if torch.isnan(mu_tot).any():
+        #     import pdb; pdb.set_trace()
 
         return x, mu_tot, scale_tot, log_scale_tot
 

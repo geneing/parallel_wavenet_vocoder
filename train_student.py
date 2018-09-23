@@ -308,13 +308,13 @@ class KLLoss(nn.Module):
         teacher_scale = torch.exp(teacher_log_scale)
 
         loss1 = 4 * torch.pow(torch.abs(teacher_log_scale - student_log_scale), 2)
-        loss2 = torch.log(teacher_scale/student_scale) \
+        loss2 = torch.log(teacher_scale) - torch.log(student_scale) \
                 + (torch.pow(student_scale, 2) - torch.pow(teacher_scale, 2)
                    + torch.pow((student_mu - teacher_mu), 2)) / (2 * torch.pow(teacher_scale, 2))
         kl_loss = loss1 + loss2
-
-        if torch.isnan(kl_loss).any():
-            import pdb; pdb.set_trace()
+        #
+        # if torch.isnan(kl_loss).any():
+        #     import pdb; pdb.set_trace()
 
         return kl_loss
 
@@ -360,8 +360,8 @@ class PowerLoss(nn.Module):
     def get_magnitude(self, stft_res):
         real = stft_res[:, :, :, 0]
         im = stft_res[:, :, :, 1]
-        return torch.sqrt(torch.pow(real, 2) +  torch.pow(im, 2))
-
+        #return torch.sqrt(torch.pow(real, 2) + torch.pow(im, 2) + 1.e-4)
+        return torch.norm(stft_res, 2, 3, False)
 
 def ensure_divisible(length, divisible_by=256, lower=True):
     if length % divisible_by == 0:
@@ -649,104 +649,101 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
     train = (phase == "train")
     clip_thresh = hparams.clip_thresh
     distill_direct = hparams.distill_direct
-
-    if train:
-        student.train()
-        step = global_step
-    else:
-        student.eval()
-        step = global_test_step
-    teacher.eval()
-
-    # Learning rate schedule
-    current_lr = hparams.initial_learning_rate
-    if train and hparams.lr_schedule is not None:
-        lr_schedule_f = getattr(lrschedule, hparams.lr_schedule)
-        current_lr = lr_schedule_f(
-            hparams.initial_learning_rate, step, **hparams.lr_schedule_kwargs)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = current_lr
-    optimizer.zero_grad()
-
-    # Prepare data
-    x, y = x.to(device), y.to(device)
-    input_lengths = input_lengths.to(device)
-    c = c.to(device) if c is not None else None
-    g = g.to(device) if g is not None else None
-
-    # (B, T, 1)
-    mask = sequence_mask(input_lengths, max_len=x.size(-1))
-    mask = mask[:, 1:]
-
-    dist = torch.distributions.normal.Normal(loc=0., scale=1.)
-    z = dist.sample(x.size())
-
-    # Apply model: Run the model in regular eval mode
-    # NOTE: softmax is handled in F.cross_entrypy_loss
-    # y_hat: (B x C x T)
-
-    # get student output and feed student_hat to teacher get teacher's output
-    if use_cuda:
-        # multi gpu support
-        # you must make sure that batch size % num gpu == 0
-        student_hat, student_mu, student_scale, student_log_scale \
-            = torch.nn.parallel.data_parallel(student, (z, c, g, False, device, hparams.log_scale_min))
-        if distill_direct:
-            teacher_output = torch.nn.parallel.data_parallel(teacher, (x, c, g, False))
+    #with torch.autograd.detect_anomaly():
+    if 1:
+        if train:
+            student.train()
+            step = global_step
         else:
-            teacher_output = torch.nn.parallel.data_parallel(teacher, (student_hat, c, g, False))
-    else:
-        student_hat, student_mu, student_scale, student_log_scale \
-            = student(z, c, g, False, device, hparams.log_scale_min)
-        if distill_direct:
-            teacher_output = teacher(x, c, g, False)
+            student.eval()
+            step = global_test_step
+        teacher.eval()
+
+        # Learning rate schedule
+        current_lr = hparams.initial_learning_rate
+        if train and hparams.lr_schedule is not None:
+            lr_schedule_f = getattr(lrschedule, hparams.lr_schedule)
+            current_lr = lr_schedule_f(
+                hparams.initial_learning_rate, step, **hparams.lr_schedule_kwargs)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
+        optimizer.zero_grad()
+
+        # Prepare data
+        x, y = x.to(device), y.to(device)
+        input_lengths = input_lengths.to(device)
+        c = c.to(device) if c is not None else None
+        g = g.to(device) if g is not None else None
+
+        # (B, T, 1)
+        mask = sequence_mask(input_lengths, max_len=x.size(-1))
+        mask = mask[:, 1:]
+
+        dist = torch.distributions.normal.Normal(loc=0., scale=1.)
+        z = dist.sample(x.size())
+
+        # Apply model: Run the model in regular eval mode
+        # NOTE: softmax is handled in F.cross_entrypy_loss
+        # y_hat: (B x C x T)
+
+        # get student output and feed student_hat to teacher get teacher's output
+        if use_cuda:
+            # multi gpu support
+            # you must make sure that batch size % num gpu == 0
+            student_hat, student_mu, student_scale, student_log_scale \
+                = torch.nn.parallel.data_parallel(student, (z, c, g, False, device, hparams.log_scale_min))
+            if distill_direct:
+                teacher_output = torch.nn.parallel.data_parallel(teacher, (x, c, g, False))
+            else:
+                teacher_output = torch.nn.parallel.data_parallel(teacher, (student_hat, c, g, False))
         else:
-            teacher_output = teacher(student_hat, c, g, False)
+            student_hat, student_mu, student_scale, student_log_scale \
+                = student(z, c, g, False, device, hparams.log_scale_min)
+            if distill_direct:
+                teacher_output = teacher(x, c, g, False)
+            else:
+                teacher_output = teacher(student_hat, c, g, False)
 
-    # calculate loss
-    kl_loss = torch.nn.parallel.data_parallel(kl_criterion, (teacher_output, student_mu, student_scale, student_log_scale))
-    kl_loss = ((kl_loss * mask).sum()) / mask.sum()
+        # calculate loss
+        kl_loss = torch.nn.parallel.data_parallel(kl_criterion, (teacher_output, student_mu, student_scale, student_log_scale))
+        kl_loss = ((kl_loss * mask).sum()) / mask.sum()
 
-    power_loss = torch.nn.parallel.data_parallel(pl_criterion, (student_hat, y))
-    power_loss = torch.mean(power_loss)
+        power_loss = torch.nn.parallel.data_parallel(pl_criterion, (student_hat, y))
+        power_loss = torch.mean(power_loss)
 
-    if torch.isnan(power_loss).any():
-        import pdb; pdb.set_trace()
-    if torch.isnan(kl_loss).any():
-        import pdb; pdb.set_trace()
+        loss = kl_loss + power_loss
 
-    loss = kl_loss + power_loss
+        if train and step > 0 and step % hparams.checkpoint_interval == 0:
+            save_states(step, writer, teacher_output, student_hat, y, input_lengths, checkpoint_dir)
+            save_checkpoint(device, student, optimizer, step, checkpoint_dir, epoch, ema)
 
-    if train and step > 0 and step % hparams.checkpoint_interval == 0:
-        save_states(step, writer, teacher_output, student_hat, y, input_lengths, checkpoint_dir)
-        save_checkpoint(device, student, optimizer, step, checkpoint_dir, epoch, ema)
+        if do_eval:
+            # NOTE: use train step (i.e., global_step) for filename
+            eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema)
 
-    if do_eval:
-        # NOTE: use train step (i.e., global_step) for filename
-        eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema)
+        # Update
+        if train:
+            loss.backward(retain_graph=True)
+            if clip_thresh > 0:
+                grad_norm = torch.nn.utils.clip_grad_norm_(student.parameters(), clip_thresh)
 
-    # Update
-    if train:
-        loss.backward()
-        if clip_thresh > 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(student.parameters(), clip_thresh)
-        optimizer.step()
-        # update moving average
-        if ema is not None:
-            for name, param in student.named_parameters():
-                if torch.isnan(param.data).any():
-                    import pdb; pdb.set_trace()
-                if name in ema.shadow:
-                    ema.update(name, param.data)
+            optimizer.step()
+            # update moving average
+            if ema is not None:
+                for name, param in student.named_parameters():
+                    # if torch.isnan(param.data).any():
+                    #     import pdb; pdb.set_trace()
+                    if name in ema.shadow:
+                        ema.update(name, param.data)
 
-    # Logs
-    writer.add_scalar("{} loss".format(phase), float(loss.item()), step)
-    writer.add_scalar("{} kl loss".format(phase), float(kl_loss.item()), step)
-    writer.add_scalar("{} power loss".format(phase), float(power_loss.item()), step)
-    if train:
-        if clip_thresh > 0:
-            writer.add_scalar("gradient norm", grad_norm, step)
-        writer.add_scalar("learning rate", current_lr, step)
+        # Logs
+        writer.add_scalar("{} loss".format(phase), float(loss.item()), step)
+        writer.add_scalar("{} kl loss".format(phase), float(kl_loss.item()), step)
+        writer.add_scalar("{} power loss".format(phase), float(power_loss.item()), step)
+        if train:
+            if clip_thresh > 0:
+                writer.add_scalar("gradient norm", grad_norm, step)
+            writer.add_scalar("learning rate", current_lr, step)
 
     return loss.item(), kl_loss.item(), power_loss.item()
 
@@ -1078,8 +1075,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(student_train_params,
                            lr=hparams.initial_learning_rate, betas=(
         hparams.adam_beta1, hparams.adam_beta2),
-        eps=hparams.adam_eps, weight_decay=hparams.weight_decay,
-        amsgrad=hparams.amsgrad)
+        eps=hparams.adam_eps, weight_decay=hparams.weight_decay)
 
     if checkpoint_restore_parts is not None:
         restore_parts(checkpoint_restore_parts, student)
@@ -1095,7 +1091,7 @@ if __name__ == "__main__":
 
     # Setup summary writer for tensorboard
     if log_event_path is None:
-        log_event_path = "log/run-test" + str(datetime.now()).replace(" ", "_")
+        log_event_path = "log_student/run-test" + str(datetime.now()).replace(" ", "_")
     print("TensorBoard event log path: {}".format(log_event_path))
     writer = SummaryWriter(log_dir=log_event_path)
 
