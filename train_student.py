@@ -344,23 +344,20 @@ class PowerLoss(nn.Module):
         y_magnitude = self.get_magnitude(y_stft)
         loss = torch.pow(torch.norm(torch.abs(student_magnitude) - torch.abs(y_magnitude), p=2, dim=2), 2)
 
-        # freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
+        freq1 = int(3000 / (self.sample_rate * 0.5) * 257)
         #student_stft1 = torch.stft(student_hat, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
         #y_stft1 = torch.stft(y, frame_length=1200, hop=300, fft_size=512, window=window)[:, :, freq1:, :]
 
-        # student_stft1 = torch.stft(student_hat, 512, hop_length=300)[:, freq1:, :, :]
-        # y_stft1 = torch.stft(y, 512, hop_length=300)[:, freq1:, :, :]
+        student_stft1 = torch.stft(student_hat, 512, hop_length=300)[:, :freq1, :, :]
+        y_stft1 = torch.stft(y, 512, hop_length=300)[:, :freq1, :, :]
         #
-        # student_magnitude1 = self.get_magnitude(student_stft1)
-        # y_magnitude1 = self.get_magnitude(y_stft1)
-        # loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=2), 2)
+        student_magnitude1 = self.get_magnitude(student_stft1)
+        y_magnitude1 = self.get_magnitude(y_stft1)
+        loss1 = torch.pow(torch.norm(torch.abs(student_magnitude1) - torch.abs(y_magnitude1), p=2, dim=2), 2)
 
-        return torch.mean(loss, dim=1) # + 10 * torch.mean(loss1, dim=1)
+        return (torch.mean(loss, dim=1) + 10 * torch.mean(loss1, dim=1))/256.
 
     def get_magnitude(self, stft_res):
-        real = stft_res[:, :, :, 0]
-        im = stft_res[:, :, :, 1]
-        #return torch.sqrt(torch.pow(real, 2) + torch.pow(im, 2) + 1.e-4)
         return torch.norm(stft_res, 2, 3, False)
 
 def ensure_divisible(length, divisible_by=256, lower=True):
@@ -516,7 +513,7 @@ def save_waveplot(path, y_hat, y_target, student_hat=None):
         plt.close()
 
 
-def eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema=None):
+def eval_model(global_step, writer, device, student, teacher, x, y, c, g, input_lengths, eval_dir, ema=None):
     if ema is not None:
         print("Using averaged model for evaluation")
         student = clone_as_averaged_model(device, student, ema)
@@ -543,13 +540,20 @@ def eval_model(global_step, writer, device, student, teacher, y, c, g, input_len
         print("Shape of global conditioning features: {}".format(g.size()))
 
     # noise input
-    dist = torch.distributions.normal.Normal(loc=0., scale=1.)
-    z = dist.sample((1, 1, length)).to(device)
+    if not hparams.deterministic_noise:
+        dist = torch.distributions.normal.Normal(loc=0., scale=1.)
+        z = dist.sample((1, 1, length)).to(device)
+    else:
+        z = torch.linspace(start=0, end=length/hparams.sample_rate, steps=length, device=device)
 
     # Run the model
     with torch.no_grad():
         student_hat, _, _, _ = student(x=z, c=c, g=g, log_scale_min=hparams.log_scale_min, device=device)
-        teacher_output = teacher(student_hat, c=c, g=g, softmax=False)
+
+        if hparams.distill_direct:
+            teacher_output = teacher(x, c=c, g=g, softmax=False)
+        else:
+            teacher_output = teacher(student_hat, c=c, g=g, softmax=False)
         teacher_output = teacher_output.transpose(1, 2)
         teacher_hat = sample_from_gaussian(teacher_output, log_scale_min=hparams.log_scale_min)
 
@@ -719,7 +723,7 @@ def __train_step(device, phase, epoch, global_step, global_test_step,
 
         if do_eval:
             # NOTE: use train step (i.e., global_step) for filename
-            eval_model(global_step, writer, device, student, teacher, y, c, g, input_lengths, eval_dir, ema)
+            eval_model(global_step, writer, device, student, teacher, x, y, c, g, input_lengths, eval_dir, ema)
 
         # Update
         if train:

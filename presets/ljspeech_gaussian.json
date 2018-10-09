@@ -46,7 +46,7 @@
   "adam_beta2": 0.999,
   "adam_eps": 1e-08,
   "initial_learning_rate": 0.001,
-  "lr_schedule": "noam_learning_rate_decay",
+  "lr_schedule": "multi_step_lr",
   "lr_schedule_kwargs": {},
   "nepochs": 2000,
   "weight_decay": 0.0,

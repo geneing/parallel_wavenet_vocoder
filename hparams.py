@@ -138,6 +138,7 @@ hparams = tf.contrib.training.HParams(
 
     #Experiments
     distill_direct=False,
+    deterministic_noise=False,
 )
 
 
